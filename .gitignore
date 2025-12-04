@@ -1,0 +1,7 @@
+# Uploads folder (bag files too large for GitHub)
+uploads/
+__pycache__/
+*.pyc
+*.log
+*.db3
+*.bag

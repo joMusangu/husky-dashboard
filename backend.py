@@ -56,6 +56,7 @@ try:
     import can
     CAN_AVAILABLE = True
 except ImportError:
+    can = None  # type: ignore
     CAN_AVAILABLE = False
     print("⚠ Warning: python-can not available")
 
@@ -473,7 +474,7 @@ class CANBusParser:
             return parser(msg)
         return None
     
-    def _parse_motor_command(self, msg: can.Message) -> Dict:
+    def _parse_motor_command(self, msg: Any) -> Dict:
         """Parse motor command message"""
         data = struct.unpack('<HH', msg.data[:4])
         return {
@@ -483,7 +484,7 @@ class CANBusParser:
             'right_motor': data[1]
         }
     
-    def _parse_steering_command(self, msg: can.Message) -> Dict:
+    def _parse_steering_command(self, msg: Any) -> Dict:
         """Parse steering command message"""
         angle = struct.unpack('<h', msg.data[:2])[0]
         return {
@@ -492,7 +493,7 @@ class CANBusParser:
             'angle': angle / 100.0  # Convert to degrees
         }
     
-    def _parse_status(self, msg: can.Message) -> Dict:
+    def _parse_status(self, msg: Any) -> Dict:
         """Parse status message"""
         return {
             'timestamp': msg.timestamp,

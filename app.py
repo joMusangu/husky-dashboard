@@ -4,8 +4,7 @@ Flask API Server for ROS Sensor Data Poisoning Detection
 Uses HTTP polling for real-time updates (no WebSocket needed)
 """
 
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
+# Standard library imports
 import os
 import threading
 from pathlib import Path
@@ -13,24 +12,26 @@ import json
 import zipfile
 import time
 import math
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import numpy as np
 
-# Import backend classes
+# Local application imports
 from backend import (
     ROSBagParser, AnomalyDetector, 
     RealtimeProcessor, SensorReading
 )
-import numpy as np
+from poison_injector import (
+    PoisonInjector, PoisonConfig, PoisonType,
+    get_preset_attack, list_preset_attacks
+)
 
 app = Flask(__name__, static_folder='.')
 
 # Configure CORS
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-"""
-NOTE: Poison injection functionality (poison_injector.py and related endpoints)
-has been removed from the max demo version. The demo focuses on detecting
-anomalies in pre-poisoned bags, per the project report methodology.
-"""
+# Poison injection is now enabled for testing and validation
 
 @app.after_request
 def after_request(response):
@@ -84,14 +85,45 @@ def start_processing():
     detector = AnomalyDetector(prediction_window=prediction_window)
     processor = RealtimeProcessor(detector)
     
+    # Initialize poison injector if configured
+    poison_injector = None
+    poison_configs = config.get('poisonConfigs', [])
+    if poison_configs:
+        poison_injector = PoisonInjector()
+        for pc in poison_configs:
+            # Check if it's a preset
+            if 'preset' in pc:
+                preset_name = pc['preset']
+                preset_configs = get_preset_attack(preset_name)
+                for preset_config in preset_configs:
+                    poison_injector.add_poison(preset_config)
+            else:
+                # Convert dict to PoisonConfig
+                poison_type = PoisonType(pc['poisonType'])
+                poison_config = PoisonConfig(
+                    poison_type=poison_type,
+                    start_time=pc.get('startTime', 0.0),
+                    duration=pc.get('duration', 1.0),
+                    intensity=pc.get('intensity', 1.0),
+                    target_sensor=pc.get('targetSensor', 'gps'),
+                    jump_distance=pc.get('jumpDistance', 50.0),
+                    drift_rate=pc.get('driftRate', 5.0),
+                    noise_stddev=pc.get('noiseStddev', 0.1),
+                    bias_value=pc.get('biasValue', 0.5),
+                    scale_factor=pc.get('scaleFactor', 2.0)
+                )
+                poison_injector.add_poison(poison_config)
+    
     with processor_lock:
         active_processors[processor_id] = {
             'processor': processor,
             'detector': detector,
+            'poison_injector': poison_injector,
             'readings': [],
             'results': [],
             'total_anomalies': 0,  # Track cumulative anomaly count per run
             'all_anomalies': [],  # Track ALL anomalies separately (not just recent window)
+            'injected_poisons': [],  # Track injected poisons for validation
             'config': config,
             'running': True,
             'error': None
@@ -150,7 +182,15 @@ def process_synthetic_data(processor_id, config):
             velocity=2.0 + 0.5 * np.sin(t)
         )
         
-        # No poison injection - using pre-poisoned bags per report methodology
+        # Apply poison injection if configured
+        if proc_data.get('poison_injector'):
+            modified_reading, is_poisoned, poison_info = proc_data['poison_injector'].inject(reading, t)
+            if is_poisoned:
+                proc_data['injected_poisons'].append({
+                    'timestamp': t,
+                    'poisons': poison_info['applied_poisons']
+                })
+            reading = modified_reading
         
         readings.append(reading)
         processor.add_reading(reading)
@@ -208,7 +248,16 @@ def process_ros_bag(processor_id, bag_path, config):
             if processor_id not in active_processors or not proc_data['running']:
                 break
             
-            # Process reading (no poison injection - using pre-poisoned bags per report methodology)
+            # Apply poison injection if configured
+            if proc_data.get('poison_injector'):
+                modified_reading, is_poisoned, poison_info = proc_data['poison_injector'].inject(reading, reading.timestamp)
+                if is_poisoned:
+                    proc_data['injected_poisons'].append({
+                        'timestamp': reading.timestamp,
+                        'poisons': poison_info['applied_poisons']
+                    })
+                reading = modified_reading
+            
             proc_data['readings'].append(reading)
             processor.add_reading(reading)
             
@@ -374,6 +423,19 @@ def get_status(processor_id):
         'anomalies': formatted_anomalies
     }
     
+    # Get poison injection info
+    poison_info = None
+    if proc_data.get('poison_injector'):
+        poison_info = {
+            'enabled': True,
+            'injectedCount': len(proc_data.get('injected_poisons', [])),
+            'stats': proc_data['poison_injector'].get_injection_stats()
+        }
+    else:
+        poison_info = {'enabled': False}
+    
+    response['poisonInjection'] = poison_info
+    
     if proc_data.get('error'):
         response['error'] = proc_data['error']
     
@@ -395,6 +457,128 @@ def stop_processing(processor_id):
     return jsonify({
         'status': 'stopped',
         'message': 'Processing stopped'
+    })
+
+
+@app.route('/api/poison/presets', methods=['GET'])
+def get_poison_presets():
+    """Get list of available preset poison attack scenarios"""
+    presets = list_preset_attacks()
+    return jsonify({
+        'presets': presets,
+        'descriptions': {
+            'quick_test': 'Quick GPS jump test attacks',
+            'sustained_drift': 'Sustained GPS drift attack',
+            'sensor_freeze': 'GPS sensor freeze attack',
+            'imu_attack': 'IMU noise and bias attacks',
+            'multi_sensor': 'Multi-sensor coordinated attack',
+            'intermittent': 'Intermittent GPS jump attacks'
+        }
+    })
+
+
+@app.route('/api/poison/types', methods=['GET'])
+def get_poison_types():
+    """Get list of available poison types"""
+    types = [pt.value for pt in PoisonType]
+    return jsonify({
+        'types': types,
+        'descriptions': {
+            'gps_jump': 'Sudden GPS position jump',
+            'gps_drift': 'Gradual GPS position drift',
+            'gps_freeze': 'GPS readings freeze at current position',
+            'imu_noise': 'Add noise to IMU readings',
+            'imu_bias': 'Add bias to IMU readings',
+            'odom_scaling': 'Scale odometry values',
+            'velocity_spike': 'Sudden velocity change',
+            'altitude_jump': 'Altitude anomaly',
+            'sensor_dropout': 'Sensor drops out',
+            'replay_attack': 'Replay old sensor data'
+        }
+    })
+
+
+@app.route('/api/process/<processor_id>/poison/stats', methods=['GET'])
+def get_poison_stats(processor_id):
+    """Get poison injection statistics for a processor"""
+    if processor_id not in active_processors:
+        return jsonify({'error': 'Processor not found'}), 404
+    
+    proc_data = active_processors[processor_id]
+    poison_injector = proc_data.get('poison_injector')
+    
+    if not poison_injector:
+        return jsonify({
+            'enabled': False,
+            'message': 'Poison injection not enabled for this processor'
+        })
+    
+    stats = poison_injector.get_injection_stats()
+    return jsonify({
+        'enabled': True,
+        'stats': stats,
+        'injected_poisons': proc_data.get('injected_poisons', [])
+    })
+
+
+@app.route('/api/poison/presets', methods=['GET'])
+def get_poison_presets():
+    """Get list of available preset poison attack scenarios"""
+    presets = list_preset_attacks()
+    return jsonify({
+        'presets': presets,
+        'descriptions': {
+            'quick_test': 'Quick GPS jump test attacks',
+            'sustained_drift': 'Sustained GPS drift attack',
+            'sensor_freeze': 'GPS sensor freeze attack',
+            'imu_attack': 'IMU noise and bias attacks',
+            'multi_sensor': 'Multi-sensor coordinated attack',
+            'intermittent': 'Intermittent GPS jump attacks'
+        }
+    })
+
+
+@app.route('/api/poison/types', methods=['GET'])
+def get_poison_types():
+    """Get list of available poison types"""
+    types = [pt.value for pt in PoisonType]
+    return jsonify({
+        'types': types,
+        'descriptions': {
+            'gps_jump': 'Sudden GPS position jump',
+            'gps_drift': 'Gradual GPS position drift',
+            'gps_freeze': 'GPS readings freeze at current position',
+            'imu_noise': 'Add noise to IMU readings',
+            'imu_bias': 'Add bias to IMU readings',
+            'odom_scaling': 'Scale odometry values',
+            'velocity_spike': 'Sudden velocity change',
+            'altitude_jump': 'Altitude anomaly',
+            'sensor_dropout': 'Sensor drops out',
+            'replay_attack': 'Replay old sensor data'
+        }
+    })
+
+
+@app.route('/api/process/<processor_id>/poison/stats', methods=['GET'])
+def get_poison_stats(processor_id):
+    """Get poison injection statistics for a processor"""
+    if processor_id not in active_processors:
+        return jsonify({'error': 'Processor not found'}), 404
+    
+    proc_data = active_processors[processor_id]
+    poison_injector = proc_data.get('poison_injector')
+    
+    if not poison_injector:
+        return jsonify({
+            'enabled': False,
+            'message': 'Poison injection not enabled for this processor'
+        })
+    
+    stats = poison_injector.get_injection_stats()
+    return jsonify({
+        'enabled': True,
+        'stats': stats,
+        'injected_poisons': proc_data.get('injected_poisons', [])
     })
 
 

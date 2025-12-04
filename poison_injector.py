@@ -206,9 +206,12 @@ class PoisonInjector:
         """Scale odometry values"""
         scale = 1.0 + (config.scale_factor - 1.0) * config.intensity
         
-        # Scale velocities
-        reading.odom_velocity_linear = tuple(v * scale for v in reading.odom_velocity_linear)
-        reading.odom_velocity_angular = tuple(v * scale for v in reading.odom_velocity_angular)
+        # Scale odometry positions and velocity
+        reading.wheel_odom_x *= scale
+        reading.wheel_odom_y *= scale
+        reading.velocity *= scale
+        reading.cmd_vel_linear *= scale
+        reading.cmd_vel_angular *= scale
         
         return reading
     
@@ -217,10 +220,9 @@ class PoisonInjector:
         if progress < 0.2:  # Spike at start
             spike_magnitude = 10.0 * config.intensity
             
-            # Add spike to linear velocity
-            spiked = list(reading.odom_velocity_linear)
-            spiked[0] += spike_magnitude
-            reading.odom_velocity_linear = tuple(spiked)
+            # Add spike to velocity
+            reading.velocity += spike_magnitude
+            reading.cmd_vel_linear += spike_magnitude
         
         return reading
     

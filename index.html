@@ -49,6 +49,10 @@
           const [config, setConfig] = useState({
             predictionWindow: 5
           });
+          const [poisonEnabled, setPoisonEnabled] = useState(false);
+          const [poisonPresets, setPoisonPresets] = useState([]);
+          const [selectedPreset, setSelectedPreset] = useState('');
+          const [poisonStats, setPoisonStats] = useState(null);
           const canvasRef = useRef(null);
           const statusIntervalRef = useRef(null);
 
@@ -71,6 +75,9 @@
               setAnomalies(data.anomalies);
               setIsProcessing(data.isProcessing);
               setError(data.error || null);
+              if (data.poisonInjection) {
+                setPoisonStats(data.poisonInjection);
+              }
 
               // Stop polling if processing is complete
               if (!data.isProcessing) {
@@ -93,9 +100,28 @@
               setAnomalies([]);
               setTrajectoryData([]);
 
+              // Build poison configs if enabled
+              let poisonConfigs = [];
+              if (poisonEnabled && selectedPreset) {
+                try {
+                  const presetResponse = await fetch(`${API_BASE_URL}/poison/presets`);
+                  const presetData = await presetResponse.json();
+                  if (presetData.presets.includes(selectedPreset)) {
+                    // For now, use preset name - backend will load it
+                    // In a full implementation, we'd fetch the actual configs
+                    poisonConfigs = [{ preset: selectedPreset }];
+                  }
+                } catch (e) {
+                  console.error('Error loading preset:', e);
+                }
+              }
+
               const requestBody = {
                 useSynthetic: !selectedFile,
-                config: config
+                config: {
+                  ...config,
+                  poisonConfigs: poisonConfigs
+                }
               };
 
               if (selectedFile) {
@@ -308,6 +334,16 @@
             }
           };
 
+          // Load poison presets on mount
+          useEffect(() => {
+            fetch(`${API_BASE_URL}/poison/presets`)
+              .then(res => res.json())
+              .then(data => {
+                setPoisonPresets(data.presets || []);
+              })
+              .catch(err => console.error('Error loading presets:', err));
+          }, []);
+
           const getSensorStatusColor = (status) => {
             switch (status) {
               case 'healthy': return 'text-green-500';
@@ -407,6 +443,54 @@
                       <Download className="w-4 h-4" />
                       Export CSV
                     </button>
+                  )}
+                </div>
+
+                {/* Poison Injection Configuration */}
+                <div className="mt-4 p-4 bg-slate-700 rounded border border-slate-600">
+                  <div className="flex items-center gap-2 mb-3">
+                    <input
+                      type="checkbox"
+                      id="poisonEnabled"
+                      checked={poisonEnabled}
+                      onChange={(e) => setPoisonEnabled(e.target.checked)}
+                      disabled={isProcessing}
+                      className="w-4 h-4"
+                    />
+                    <label htmlFor="poisonEnabled" className="text-sm font-semibold">
+                      Enable Poison Injection (for testing)
+                    </label>
+                  </div>
+                  
+                  {poisonEnabled && (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Preset Attack Scenario</label>
+                      <select
+                        value={selectedPreset}
+                        onChange={(e) => setSelectedPreset(e.target.value)}
+                        disabled={isProcessing}
+                        className="w-full bg-slate-600 border border-slate-500 rounded px-3 py-2 text-sm"
+                      >
+                        <option value="">Select a preset...</option>
+                        {poisonPresets.map(preset => (
+                          <option key={preset} value={preset}>{preset}</option>
+                        ))}
+                      </select>
+                      {selectedPreset && (
+                        <p className="text-xs text-yellow-400 mt-1">
+                          ⚠ Poison injection will be applied during processing
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {poisonStats && poisonStats.enabled && (
+                    <div className="mt-3 p-2 bg-slate-600 rounded text-xs">
+                      <div className="font-semibold mb-1">Poison Injection Stats:</div>
+                      <div>Total Injections: {poisonStats.stats?.total_injections || 0}</div>
+                      <div>Active Poisons: {poisonStats.stats?.active_poisons || 0}</div>
+                      <div>Injected Count: {poisonStats.injectedCount || 0}</div>
+                    </div>
                   )}
                 </div>
               </div>

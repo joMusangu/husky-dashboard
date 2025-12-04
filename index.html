@@ -25,14 +25,14 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        const { Activity, AlertTriangle, CheckCircle, Database, Upload, Play, Pause, BarChart3, Settings } = lucideReact;
+        const { Activity, AlertTriangle, CheckCircle, Database, Upload, Play, Pause, BarChart3, Settings, Download } = lucideReact;
 
         const ROSPoisoningDashboard = () => {
           const [isProcessing, setIsProcessing] = useState(false);
           const [sensorData, setSensorData] = useState({
-            gps: { status: 'healthy', trustScore: 1.0, lastReading: null },
-            imu: { status: 'healthy', trustScore: 1.0, lastReading: null },
-            odometry: { status: 'healthy', trustScore: 1.0, lastReading: null }
+            gps: { status: 'healthy', trustScore: 1.0, lastReading: null, lat: null, lon: null, alt: null },
+            imu: { status: 'healthy', trustScore: 1.0, lastReading: null, roll: null, pitch: null, yaw: null },
+            odometry: { status: 'healthy', trustScore: 1.0, lastReading: null, x: null, y: null, velocity: null }
           });
           const [anomalies, setAnomalies] = useState([]);
           const [metrics, setMetrics] = useState({
@@ -45,10 +45,9 @@
           const [trajectoryData, setTrajectoryData] = useState([]);
           const [selectedFile, setSelectedFile] = useState(null);
           const [processorId, setProcessorId] = useState(null);
+          const [error, setError] = useState(null);
           const [config, setConfig] = useState({
-            predictionWindow: 5,
-            velocityThreshold: 5.0,
-            positionJumpThreshold: 10.0
+            predictionWindow: 5
           });
           const canvasRef = useRef(null);
           const statusIntervalRef = useRef(null);
@@ -71,6 +70,7 @@
               setTrajectoryData(data.trajectoryData);
               setAnomalies(data.anomalies);
               setIsProcessing(data.isProcessing);
+              setError(data.error || null);
 
               // Stop polling if processing is complete
               if (!data.isProcessing) {
@@ -88,6 +88,7 @@
           const startProcessing = async () => {
             try {
               setIsProcessing(true);
+              setError(null);
               setMetrics({ totalReadings: 0, anomaliesDetected: 0, detectionRate: 0, avgProcessingTime: 0, currentTimestamp: 0 });
               setAnomalies([]);
               setTrajectoryData([]);
@@ -108,7 +109,8 @@
                 });
                 
                 if (!uploadResponse.ok) {
-                  throw new Error('File upload failed');
+                  const errorData = await uploadResponse.json();
+                  throw new Error(errorData.error || 'File upload failed');
                 }
                 
                 const uploadData = await uploadResponse.json();
@@ -124,7 +126,8 @@
               });
 
               if (!response.ok) {
-                throw new Error('Failed to start processing');
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to start processing');
               }
 
               const data = await response.json();
@@ -134,6 +137,7 @@
               statusIntervalRef.current = setInterval(fetchStatus, 500);
             } catch (error) {
               console.error('Error starting processing:', error);
+              setError(error.message);
               alert('Failed to start processing: ' + error.message);
               setIsProcessing(false);
             }
@@ -158,6 +162,34 @@
             
             setIsProcessing(false);
             setProcessorId(null);
+          };
+
+          // Export anomalies to CSV
+          const exportAnomalies = async () => {
+            if (!processorId) {
+              alert('No processor active. Start processing first.');
+              return;
+            }
+
+            try {
+              const response = await fetch(`${API_BASE_URL}/process/${processorId}/export`);
+              if (!response.ok) {
+                throw new Error('Failed to export anomalies');
+              }
+
+              const blob = await response.blob();
+              const url = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'anomalies.csv';
+              document.body.appendChild(a);
+              a.click();
+              window.URL.revokeObjectURL(url);
+              document.body.removeChild(a);
+            } catch (error) {
+              console.error('Error exporting anomalies:', error);
+              alert('Failed to export anomalies: ' + error.message);
+            }
           };
 
           // Cleanup on unmount
@@ -240,14 +272,16 @@
 
             // Draw anomaly markers
             anomalies.forEach(anomaly => {
-              ctx.fillStyle = '#ef4444';
-              ctx.beginPath();
-              ctx.arc(toX(anomaly.position.lon), toY(anomaly.position.lat), 6, 0, 2 * Math.PI);
-              ctx.fill();
-              
-              ctx.strokeStyle = '#fef2f2';
-              ctx.lineWidth = 2;
-              ctx.stroke();
+              if (anomaly.position && anomaly.position.lat && anomaly.position.lon) {
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(toX(anomaly.position.lon), toY(anomaly.position.lat), 6, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#fef2f2';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+              }
             });
 
             // Draw start point
@@ -297,6 +331,16 @@
                 <p className="text-gray-400">Real-time monitoring and anomaly detection for autonomous vehicle sensors</p>
               </div>
 
+              {/* Error Display */}
+              {error && (
+                <div className="mb-6 bg-red-900 border border-red-700 rounded-lg p-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-red-400" />
+                    <span className="font-semibold text-red-200">Error: {error}</span>
+                  </div>
+                </div>
+              )}
+
               {/* Control Panel */}
               <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
                 <div className="flex items-center gap-4 mb-4">
@@ -313,13 +357,16 @@
                       <input
                         type="file"
                         onChange={handleFileSelect}
-                        accept=".bag"
+                        accept=".bag,.zip"
                         disabled={isProcessing}
                         className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm"
                       />
                     </div>
                     {!selectedFile && (
-                      <p className="text-xs text-gray-500 mt-1">Leave empty to use synthetic data</p>
+                      <p className="text-xs text-gray-500 mt-1">Leave empty to use synthetic data. Supports ROS1 (.bag) and ROS2 (.zip)</p>
+                    )}
+                    {selectedFile && (
+                      <p className="text-xs text-green-400 mt-1">Selected: {selectedFile.name}</p>
                     )}
                   </div>
                   
@@ -337,25 +384,12 @@
                     />
                   </div>
                   
-                  <div>
-                    <label className="block text-sm text-gray-400 mb-2">Max Velocity (m/s)</label>
-                    <input
-                      type="number"
-                      value={config.velocityThreshold}
-                      onChange={(e) => setConfig({...config, velocityThreshold: parseFloat(e.target.value)})}
-                      disabled={isProcessing}
-                      className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2"
-                      min="1"
-                      max="20"
-                      step="0.5"
-                    />
-                  </div>
                 </div>
 
                 <div className="flex gap-2">
                   <button
                     onClick={isProcessing ? stopProcessing : startProcessing}
-                    className={`flex items-center gap-2 px-6 py-2 rounded font-medium ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-6 py-2 rounded font-medium ${
                       isProcessing 
                         ? 'bg-red-600 hover:bg-red-700' 
                         : 'bg-blue-600 hover:bg-blue-700'
@@ -364,6 +398,16 @@
                     {isProcessing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                     {isProcessing ? 'Stop Processing' : 'Start Analysis'}
                   </button>
+                  {processorId && anomalies.length > 0 && (
+                    <button
+                      onClick={exportAnomalies}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 rounded font-medium"
+                      title="Export anomalies to CSV"
+                    >
+                      <Download className="w-4 h-4" />
+                      Export CSV
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -456,12 +500,35 @@
                         />
                       </div>
                       
-                      <div className="flex justify-between text-xs text-gray-400">
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
                         <span>Trust: {(data.trustScore * 100).toFixed(1)}%</span>
                         {data.lastReading !== null && (
                           <span>Last: {data.lastReading.toFixed(2)}s</span>
                         )}
                       </div>
+
+                      {/* Display actual sensor values */}
+                      {sensor === 'gps' && data.lat !== null && (
+                        <div className="text-xs text-gray-400 space-y-0.5 mt-2">
+                          <div>Lat: {data.lat.toFixed(6)}°</div>
+                          <div>Lon: {data.lon.toFixed(6)}°</div>
+                          {data.alt !== null && <div>Alt: {data.alt.toFixed(2)}m</div>}
+                        </div>
+                      )}
+                      {sensor === 'imu' && data.roll !== null && (
+                        <div className="text-xs text-gray-400 space-y-0.5 mt-2">
+                          <div>Roll: {data.roll.toFixed(2)}°</div>
+                          <div>Pitch: {data.pitch.toFixed(2)}°</div>
+                          <div>Yaw: {data.yaw.toFixed(2)}°</div>
+                        </div>
+                      )}
+                      {sensor === 'odometry' && data.x !== null && (
+                        <div className="text-xs text-gray-400 space-y-0.5 mt-2">
+                          <div>X: {data.x.toFixed(2)}m</div>
+                          <div>Y: {data.y.toFixed(2)}m</div>
+                          {data.velocity !== null && <div>Vel: {data.velocity.toFixed(2)}m/s</div>}
+                        </div>
+                      )}
                     </div>
                   ))}
 
@@ -481,10 +548,17 @@
 
               {/* Anomaly Log */}
               <div className="mt-6 bg-slate-800 rounded-lg p-6 border border-slate-700">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-red-500" />
-                  Anomaly Detection Log
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-red-500" />
+                    Anomaly Detection Log
+                  </h3>
+                  {anomalies.length > 0 && (
+                    <span className="text-sm text-gray-400">
+                      {anomalies.length} anomaly{anomalies.length !== 1 ? 'ies' : ''} detected
+                    </span>
+                  )}
+                </div>
                 
                 <div className="overflow-y-auto max-h-64">
                   {anomalies.length === 0 ? (
@@ -502,7 +576,7 @@
                             <div className="flex items-center gap-2">
                               <AlertTriangle className="w-4 h-4 text-red-500" />
                               <span className="font-medium text-sm">
-                                Timestamp: {anomaly.timestamp.toFixed(2)}s
+                                Timestamp: {typeof anomaly.timestamp === 'number' ? anomaly.timestamp.toFixed(2) : anomaly.timestamp}s
                               </span>
                             </div>
                             <span className={`text-xs font-semibold px-2 py-1 rounded ${
@@ -515,9 +589,11 @@
                           </div>
                           
                           <div className="text-xs text-gray-300 space-y-1">
-                            <div>Position: ({anomaly.position.lat.toFixed(6)}, {anomaly.position.lon.toFixed(6)})</div>
+                            {anomaly.position && anomaly.position.lat && (
+                              <div>Position: ({anomaly.position.lat.toFixed(6)}, {anomaly.position.lon.toFixed(6)})</div>
+                            )}
                             <div className="flex flex-wrap gap-1 mt-2">
-                              {anomaly.reasons.map((reason, i) => (
+                              {anomaly.reasons && anomaly.reasons.map((reason, i) => (
                                 <span key={i} className="bg-slate-600 px-2 py-1 rounded text-xs">
                                   {reason}
                                 </span>

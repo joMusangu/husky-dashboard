@@ -4,10 +4,13 @@ A real-time dashboard for detecting sensor data poisoning in ROS-based autonomou
 
 ## Features
 
-- **Real-time Anomaly Detection**: Detects GPS position jumps, velocity inconsistencies, and cross-sensor mismatches
-- **ROS Bag File Support**: Parse and analyze ROS1 and ROS2 bag files
+- **Real-time Anomaly Detection**: Detects GPS position jumps, velocity inconsistencies, cross-sensor mismatches, and out-of-range GPS values
+- **ROS Bag File Support**: Parse and analyze ROS1 (.bag) and ROS2 (.zip folder) bag files
+- **Enhanced Sensor Data Display**: Shows actual GPS coordinates (lat/lon/alt), IMU orientation (roll/pitch/yaw), and odometry (x/y/velocity)
+- **LSTM-based Prediction**: Optional velocity prediction using TensorFlow/Keras models
 - **CAN Bus Integration**: Support for CAN bus log parsing (optional)
 - **Interactive Dashboard**: Real-time visualization of sensor trajectories, trust scores, and anomaly logs
+- **CSV Export**: Export detected anomalies to CSV for further analysis
 - **Synthetic Data Mode**: Test the system without ROS bag files using generated data
 
 ## Project Structure
@@ -16,8 +19,8 @@ A real-time dashboard for detecting sensor data poisoning in ROS-based autonomou
 CAPSTONE PROJECT/
 ├── backend.py          # Core detection algorithms and ROS bag parsing
 ├── app.py              # Flask API server (connects frontend to backend)
-├── frontend.js         # React component (original, for reference)
 ├── index.html          # HTML file with integrated React frontend
+├── frontend.js         # React component (original, for reference)
 ├── requirements.txt    # Python dependencies
 └── README.md          # This file
 ```
@@ -32,15 +35,17 @@ CAPSTONE PROJECT/
 If you want to process actual ROS bag files, install:
 
 ```bash
-# For ROS1 bag files
-pip install rosbag
-
-# For ROS2 bag files
+# For ROS1 and ROS2 bag files (recommended - supports both)
 pip install rosbags
 
 # For CAN bus log files
 pip install python-can
+
+# For LSTM-based velocity prediction (optional)
+pip install tensorflow keras
 ```
+
+**Note**: The `rosbags` library supports both ROS1 and ROS2 bag files. For ROS1-only support, you can use `rosbag`, but `rosbags` is recommended.
 
 ## Installation
 
@@ -85,15 +90,20 @@ python app.py
 
 You should see output like:
 ```
-======================================================================
-ROS Sensor Data Poisoning Detection - Flask API Server
-======================================================================
+============================================================
+  ROS Sensor Data Poisoning Detection Dashboard
+============================================================
 
-Starting server on http://localhost:5000
-Frontend will be available at http://localhost:5000
+  Open: http://localhost:5000
 
-Press Ctrl+C to stop the server
-======================================================================
+  Features:
+    • Poison injection controls
+    • Anomaly detection validation
+    • ROS1 (.bag) and ROS2 (.zip) support
+    • Real-time monitoring
+
+  Press Ctrl+C to stop
+============================================================
 ```
 
 ### Step 2: Open the Frontend
@@ -124,35 +134,55 @@ The dashboard should load automatically.
 ### Using ROS Bag Files
 
 1. Click **"Choose File"** in the ROS Bag File field
-2. Select a `.bag` file (ROS1 or ROS2 format)
+2. Select a `.bag` file (ROS1) or `.zip` file (ROS2 bag folder)
 3. Click **"Start Analysis"**
 4. The system will parse the bag file and process the sensor data
+5. For ROS2 bags, the system automatically extracts the zip file and locates the bag folder
+
+**Supported Formats:**
+- **ROS1**: `.bag` files
+- **ROS2**: `.zip` files containing a bag folder with `metadata.yaml` and `.db3` files
 
 ### Stopping Processing
 
 Click **"Stop Processing"** at any time to halt the analysis.
 
+### Exporting Anomalies
+
+After processing, click the **"Export CSV"** button to download all detected anomalies as a CSV file. The file includes:
+- Timestamp
+- Severity
+- Reasons
+- GPS coordinates (lat/lon)
+
 ## API Endpoints
 
 The Flask server provides the following API endpoints:
 
-- `GET /` - Serves the frontend HTML page
+- `GET /` - Serves the frontend HTML page (`index.html`)
 - `GET /api/health` - Health check endpoint
 - `POST /api/process/start` - Start processing (synthetic or ROS bag file)
-- `GET /api/process/<processor_id>/status` - Get current processing status
+  - Request body: `{ "useSynthetic": boolean, "filePath": string, "config": { "predictionWindow": number } }`
+- `GET /api/process/<processor_id>/status` - Get current processing status (polled every 500ms)
+  - Returns: metrics, sensor data, trajectory data, anomalies, and processing state
 - `POST /api/process/<processor_id>/stop` - Stop processing
-- `POST /api/upload` - Upload ROS bag file
+- `GET /api/process/<processor_id>/export` - Export all detected anomalies as CSV
+- `POST /api/upload` - Upload ROS bag file (supports `.bag` and `.zip`)
+  - Returns: `{ "filePath": string, "filename": string, "bagType": "ROS1" | "ROS2" }`
 
 ## How It Works
 
-1. **Data Collection**: The system reads sensor data from ROS bag files or generates synthetic data
+1. **Data Collection**: The system reads sensor data from ROS bag files (ROS1 or ROS2) or generates synthetic data
 2. **Anomaly Detection**: Multiple detection algorithms run in parallel:
    - Temporal consistency checks (velocity, position jumps)
    - Cross-sensor validation (GPS vs. odometry)
-   - Prediction-based detection
+   - GPS range validation (detects out-of-range GPS values)
+   - Prediction-based detection (linear trajectory model)
+   - LSTM-based velocity prediction (optional, if model available)
 3. **Trust Scoring**: Each sensor gets a dynamic trust score based on detected anomalies
 4. **Real-time Updates**: The frontend polls the backend every 500ms for status updates
-5. **Visualization**: Trajectory, anomalies, and metrics are displayed in real-time
+5. **Visualization**: Trajectory, anomalies, metrics, and actual sensor values are displayed in real-time
+6. **Data Export**: Detected anomalies can be exported to CSV for further analysis
 
 ## Troubleshooting
 
@@ -162,7 +192,7 @@ If port 5000 is already in use, edit `app.py` and change:
 ```python
 app.run(debug=True, host='0.0.0.0', port=5000)
 ```
-to a different port (e.g., `port=5001`), then access `http://localhost:5001`
+to a different port (e.g., `port=5001`), then access `http://localhost:5001` and update the `API_BASE_URL` in `index.html`.
 
 ### CORS Errors
 
@@ -174,16 +204,19 @@ pip install flask-cors
 ### ROS Bag Parsing Errors
 
 If you get errors parsing ROS bag files:
-- Make sure you have the correct ROS bag parsing library installed (`rosbag` for ROS1, `rosbags` for ROS2)
+- Make sure you have the `rosbags` library installed (supports both ROS1 and ROS2)
+- For ROS2 bags, ensure the zip file contains a folder with `metadata.yaml` and `.db3` files
 - Check that your bag file is not corrupted
-- The system will fall back to synthetic data if parsing fails
+- Verify that the bag file contains GPS, IMU, or odometry topics
+- The system will display error messages in the dashboard if parsing fails
 
 ### Frontend Not Loading
 
-- Make sure the Flask server is running
+- Make sure the Flask server is running on port 5000
 - Check the browser console for errors
 - Try refreshing the page
 - Make sure you're accessing `http://localhost:5000` (not `https://`)
+- Verify that `index.html` exists in the project directory
 
 ## Development
 
@@ -201,7 +234,8 @@ This will run the example code in `backend.py` with synthetic data.
 
 The frontend is embedded in `index.html` using React via CDN. To modify it:
 1. Edit the React component code in the `<script type="text/babel">` section
-2. Refresh the browser to see changes
+2. If you change the API port, update the `API_BASE_URL` constant in the script
+3. Refresh the browser to see changes
 
 ## License
 

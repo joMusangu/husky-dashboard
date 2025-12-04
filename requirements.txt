@@ -1,13 +1,19 @@
+# Core dependencies (required)
 flask==3.0.0
 flask-cors==4.0.0
-numpy==1.24.3
+# Note: Use a version with pre-built wheels for Windows to avoid build issues
+# If installation fails, try: pip install numpy==1.26.4 --only-binary :all:
+numpy==1.26.4
 pandas==2.0.3
-matplotlib==3.7.2
 
-# ROS bag parsing (optional - install if you have ROS bag files)
-# rosbag  # For ROS1 - install via: pip install rosbag
-# rosbags  # For ROS2 - install via: pip install rosbags
+# Optional dependencies (install if needed)
+# ROS bag parsing - supports both ROS1 and ROS2
+# rosbags>=0.9.0  # Install via: pip install rosbags
 
-# CAN bus parsing (optional - install if you have CAN log files)
-# python-can  # Install via: pip install python-can
+# CAN bus parsing
+# python-can>=4.0.0  # Install via: pip install python-can
+
+# LSTM-based prediction (optional)
+# tensorflow>=2.10.0  # Install via: pip install tensorflow
+# keras>=2.10.0  # Usually included with tensorflow
 

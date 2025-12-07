@@ -20,14 +20,37 @@ import sqlite3
 # ROS bag parsing imports
 try:
     from rosbags.rosbag1 import Reader as ROS1Reader
+    ROS1_AVAILABLE = True
+except ImportError:
+    ROS1_AVAILABLE = False
+    ROS1Reader = None
+
+try:
     from rosbags.rosbag2 import Reader as ROS2Reader
+    ROS2_AVAILABLE = True
+except ImportError:
+    ROS2_AVAILABLE = False
+    ROS2Reader = None
+
+try:
     from rosbags.serde import deserialize_cdr, cdr_to_ros1
     from rosbags.typesys import get_types_from_msg, Stores, get_typestore
-    ROSBAGS_AVAILABLE = True
-    print("✓ rosbags library available (ROS1 + ROS2 support)")
-except ImportError as e:
-    ROSBAGS_AVAILABLE = False
-    print(f"⚠ Warning: rosbags not available - {e}")
+    ROS2_SERDE_AVAILABLE = True
+except ImportError:
+    ROS2_SERDE_AVAILABLE = False
+    deserialize_cdr = None
+    cdr_to_ros1 = None
+
+ROSBAGS_AVAILABLE = ROS1_AVAILABLE or ROS2_AVAILABLE
+if ROSBAGS_AVAILABLE:
+    if ROS1_AVAILABLE and ROS2_AVAILABLE:
+        print("✓ rosbags library available (ROS1 + ROS2 support)")
+    elif ROS1_AVAILABLE:
+        print("✓ rosbags library available (ROS1 support only)")
+    elif ROS2_AVAILABLE:
+        print("✓ rosbags library available (ROS2 support only)")
+else:
+    print("⚠ Warning: rosbags not available")
     print("  Install with: pip install rosbags")
 
 # CAN bus parsing
@@ -93,8 +116,8 @@ class ROSBagParser:
     
     def parse_ros1_bag(self, bag_path: str, topics: List[str] = None) -> List[SensorReading]:
         """Parse ROS1 bag file using rosbags library"""
-        if not ROSBAGS_AVAILABLE:
-            raise ImportError("rosbags not available. Install with: pip install rosbags")
+        if not ROS1_AVAILABLE:
+            raise ImportError("rosbags ROS1 support not available. Install with: pip install rosbags")
         
         print(f"[ROS1] Parsing bag: {bag_path}")
         
@@ -103,6 +126,10 @@ class ROSBagParser:
         message_count = 0
         
         try:
+            # Create typestore once (more efficient)
+            from rosbags import typesys
+            typestore = typesys.get_typestore(typesys.Stores.ROS1_NOETIC)
+            
             with ROS1Reader(bag_path) as reader:
                 # Get available topics
                 connections = list(reader.connections)
@@ -133,14 +160,27 @@ class ROSBagParser:
                 # Filter connections to only relevant topics
                 relevant_connections = [c for c in connections if c.topic in relevant_topics]
                 
+                # Pre-load message definitions for relevant connections
+                msgdefs = {}
+                for conn in relevant_connections:
+                    try:
+                        msgdefs[conn.topic] = typestore.get_msgdef(conn.msgtype)
+                    except Exception as e:
+                        print(f"[ROS1] Warning: Could not load msgdef for {conn.topic}: {e}")
+                
                 # Iterate through messages from relevant topics only
                 for connection, timestamp, rawdata in reader.messages(connections=relevant_connections):
                     message_count += 1
                     topic = connection.topic
                     
                     try:
-                        # Deserialize message
-                        msg = deserialize_cdr(rawdata, connection.msgtype)
+                        # Get message definition (cached)
+                        msgdef = msgdefs.get(topic)
+                        if msgdef is None:
+                            continue
+                        
+                        # deserialize_ros1 returns (message_object, position)
+                        msg, _ = msgdef.deserialize_ros1(rawdata, 0, msgdef.cls, typestore)
                         t = timestamp * 1e-9  # Convert nanoseconds to seconds
                         
                         # Parse based on topic type

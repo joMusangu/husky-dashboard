@@ -109,12 +109,16 @@
         .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
         @media (max-width: 1000px) { .grid-2 { grid-template-columns: 1fr; } }
         
-        #trajectoryCanvas {
+        #trajectoryCanvas, #liveGridCanvas {
             width: 100%;
             height: 400px;
             background: rgba(0,0,0,0.3);
             border-radius: 10px;
             border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        #liveGridCanvas {
+            background: linear-gradient(135deg, rgba(0,0,0,0.5) 0%, rgba(20,20,40,0.5) 100%);
         }
         
         .legend { display: flex; gap: 20px; margin-top: 10px; flex-wrap: wrap; }
@@ -226,8 +230,6 @@
         
         <div class="tabs">
             <button class="tab active" onclick="switchTab('dashboard')">📊 Live Dashboard</button>
-            <button class="tab" onclick="switchTab('inject')">💉 Inject Poison</button>
-            <button class="tab" onclick="switchTab('validate')">✓ Validate</button>
             <button class="tab" onclick="switchTab('help')">❓ Help</button>
         </div>
         
@@ -243,10 +245,19 @@
                     </div>
                     <div class="button-row" style="margin-top: 0;">
                         <button class="btn-primary" id="startBtn" onclick="startProcessing(false)">▶️ Start</button>
-                        <button class="btn-success" onclick="startProcessing(true)">🧪 Synthetic</button>
                         <button class="btn-danger" id="stopBtn" onclick="stopProcessing()" disabled>⏹️ Stop</button>
+                        <button class="btn-warning" id="downloadAllBtn" onclick="downloadAllData()" disabled>📥 Download All Data</button>
+                        <button class="btn-warning" id="downloadAnomaliesBtn" onclick="downloadAnomalies()" disabled>📥 Download Anomalies</button>
                     </div>
                     <span class="status-badge status-idle" id="statusBadge">● Idle</span>
+                </div>
+                <div style="margin-top: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <label style="color: #a0a0a0; font-size: 14px;">Anomaly Detection Boundary (degrees):</label>
+                    <input type="number" id="thresholdInput" value="2.0" min="0.1" max="100" step="0.1" 
+                           style="padding: 8px 12px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; 
+                                  background: rgba(255,255,255,0.05); color: #fff; width: 80px; font-size: 14px;">
+                    <button class="btn-warning" onclick="changeThreshold()" id="changeThresholdBtn">Change</button>
+                    <span style="color: #a0a0a0; font-size: 12px;" id="currentThreshold">Current: 2.0°</span>
                 </div>
             </div>
             
@@ -276,6 +287,25 @@
             
             <!-- Main Content -->
             <div class="grid-2">
+                <!-- Live Grid Map -->
+                <div class="card">
+                    <h2>📍 Live Position Grid</h2>
+                    <div style="position: relative;">
+                        <canvas id="liveGridCanvas"></canvas>
+                        <div style="position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 5px; font-size: 12px;">
+                            <div>Lat: <span id="currentLat">--</span>°</div>
+                            <div>Lon: <span id="currentLon">--</span>°</div>
+                            <div id="predictionInfo" style="margin-top: 5px; font-size: 10px; color: #ffa502; display: none;">
+                                Pred: <span id="predictedLat">--</span>°, <span id="predictedLon">--</span>°
+                            </div>
+                        </div>
+                    </div>
+                    <div class="legend" style="margin-top: 10px;">
+                        <div class="legend-item"><div class="legend-dot" style="background:#00d4ff"></div> Current</div>
+                        <div class="legend-item"><div class="legend-dot" style="background:#ffa502"></div> Predicted</div>
+                    </div>
+                </div>
+                
                 <!-- GPS Trajectory -->
                 <div class="card">
                     <h2>🗺️ GPS Trajectory</h2>
@@ -319,85 +349,13 @@
             </div>
         </div>
         
-        <!-- Tab 2: Inject Poison -->
-        <div id="inject" class="tab-content">
-            <div class="card">
-                <h2>🎯 Preset Attack Scenarios</h2>
-                <div class="preset-grid" id="presetGrid"></div>
-                <div class="button-row">
-                    <button class="btn-primary" onclick="applyPreset()">Apply Preset</button>
-                    <button class="btn-danger" onclick="clearPoisons()">Clear All</button>
-                    <button class="btn-warning" onclick="getPoisonStatus()">Check Status</button>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>⚙️ Custom Poison</h2>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Type</label>
-                        <select id="poisonType">
-                            <option value="gps_jump">GPS Jump</option>
-                            <option value="gps_drift">GPS Drift</option>
-                            <option value="gps_freeze">GPS Freeze</option>
-                            <option value="imu_noise">IMU Noise</option>
-                            <option value="imu_bias">IMU Bias</option>
-                            <option value="odom_scaling">Odom Scaling</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Start (sec)</label>
-                        <input type="number" id="startTime" value="2.0" step="0.5">
-                    </div>
-                    <div class="form-group">
-                        <label>Duration (sec)</label>
-                        <input type="number" id="duration" value="1.0" step="0.1">
-                    </div>
-                    <div class="form-group">
-                        <label>Intensity (0-1)</label>
-                        <input type="number" id="intensity" value="1.0" min="0" max="1" step="0.1">
-                    </div>
-                    <div class="form-group">
-                        <label>Jump Dist (m)</label>
-                        <input type="number" id="jumpDistance" value="50" step="5">
-                    </div>
-                </div>
-                <div class="button-row">
-                    <button class="btn-success" onclick="addCustomPoison()">Add Poison</button>
-                </div>
-            </div>
-            
-            <div id="poisonStatus"></div>
-        </div>
-        
-        <!-- Tab 3: Validate -->
-        <div id="validate" class="tab-content">
-            <div class="card">
-                <h2>✓ Detection Validation</h2>
-                <div class="status-box info">
-                    <strong>Usage:</strong> Inject poisons → Run processing → Click validate to check accuracy
-                </div>
-                <div class="button-row">
-                    <button class="btn-primary" onclick="validateDetection()">Run Validation</button>
-                </div>
-            </div>
-            <div id="validationResults"></div>
-        </div>
-        
         <!-- Tab 4: Help -->
         <div id="help" class="tab-content">
             <div class="card">
                 <h2>📖 Quick Guide</h2>
                 <div style="line-height:1.8">
                     <p><strong>1. Live Dashboard:</strong> Upload bag file or use synthetic data, watch real-time processing</p>
-                    <p><strong>2. Inject Poison:</strong> Select preset or custom poison, click Apply before processing</p>
-                    <p><strong>3. Validate:</strong> After processing, check if injected poisons were detected</p>
-                    <p><strong>Presets:</strong> quick_test, sustained_drift, sensor_freeze, imu_attack, multi_sensor</p>
                 </div>
-            </div>
-            <div class="card">
-                <h2>🧪 Poison Types</h2>
-                <div id="poisonTypesList" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"></div>
             </div>
         </div>
     </div>
@@ -406,19 +364,30 @@
         const API_BASE = 'http://localhost:5000/api';
         let processorId = null;
         let statusInterval = null;
+        window.anomalyPopupShown = false;  // Track if anomaly popup has been shown
         let selectedFile = null;
         let selectedPreset = null;
         let canvas, ctx;
+        let liveGridCanvas, liveGridCtx;
+        let currentPosition = null;
+        let positionHistory = [];
+        let gridBounds = { minLat: null, maxLat: null, minLon: null, maxLon: null };
         
         window.onload = async function() {
+            // Trajectory canvas
             canvas = document.getElementById('trajectoryCanvas');
             canvas.width = canvas.offsetWidth;
             canvas.height = canvas.offsetHeight;
             ctx = canvas.getContext('2d');
             drawEmptyCanvas();
             
-            await loadPresets();
-            await loadPoisonTypes();
+            // Live grid canvas
+            liveGridCanvas = document.getElementById('liveGridCanvas');
+            liveGridCanvas.width = liveGridCanvas.offsetWidth;
+            liveGridCanvas.height = liveGridCanvas.offsetHeight;
+            liveGridCtx = liveGridCanvas.getContext('2d');
+            drawEmptyGrid();
+            
             
             try {
                 const r = await fetch(`${API_BASE}/health`);
@@ -445,19 +414,621 @@
             ctx.fillText('Waiting for data...', canvas.width/2, canvas.height/2);
         }
         
+        function drawEmptyGrid() {
+            if (!liveGridCtx) return;
+            // Clear canvas
+            liveGridCtx.fillStyle = 'rgba(0,0,0,0.5)';
+            liveGridCtx.fillRect(0, 0, liveGridCanvas.width, liveGridCanvas.height);
+            
+            // Draw grid
+            drawGrid();
+            
+            // Draw compass labels
+            drawCompassLabels();
+            
+            // Draw center message
+            liveGridCtx.fillStyle = '#666';
+            liveGridCtx.font = '16px Arial';
+            liveGridCtx.textAlign = 'center';
+            liveGridCtx.fillText('Waiting for GPS data...', liveGridCanvas.width/2, liveGridCanvas.height/2);
+        }
+        
+        function drawGrid() {
+            if (!liveGridCtx) return;
+            const gridSize = 20;
+            const padding = 50;
+            const width = liveGridCanvas.width - 2 * padding;
+            const height = liveGridCanvas.height - 2 * padding;
+            
+            liveGridCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+            liveGridCtx.lineWidth = 1;
+            
+            // Vertical lines
+            for (let i = 0; i <= gridSize; i++) {
+                const x = padding + (i * width / gridSize);
+                liveGridCtx.beginPath();
+                liveGridCtx.moveTo(x, padding);
+                liveGridCtx.lineTo(x, padding + height);
+                liveGridCtx.stroke();
+            }
+            
+            // Horizontal lines
+            for (let i = 0; i <= gridSize; i++) {
+                const y = padding + (i * height / gridSize);
+                liveGridCtx.beginPath();
+                liveGridCtx.moveTo(padding, y);
+                liveGridCtx.lineTo(padding + width, y);
+                liveGridCtx.stroke();
+            }
+            
+            // Center crosshair
+            const centerX = padding + width / 2;
+            const centerY = padding + height / 2;
+            liveGridCtx.strokeStyle = 'rgba(0,212,255,0.5)';
+            liveGridCtx.lineWidth = 2;
+            liveGridCtx.setLineDash([5, 5]);
+            liveGridCtx.beginPath();
+            liveGridCtx.moveTo(centerX, padding);
+            liveGridCtx.lineTo(centerX, padding + height);
+            liveGridCtx.moveTo(padding, centerY);
+            liveGridCtx.lineTo(padding + width, centerY);
+            liveGridCtx.stroke();
+            liveGridCtx.setLineDash([]);
+        }
+        
+        function drawCompassLabels() {
+            if (!liveGridCtx) return;
+            const padding = 50;
+            liveGridCtx.fillStyle = '#00d4ff';
+            liveGridCtx.font = 'bold 18px Arial';
+            liveGridCtx.textAlign = 'center';
+            liveGridCtx.textBaseline = 'middle';
+            
+            // North (top)
+            liveGridCtx.fillText('N', liveGridCanvas.width / 2, 20);
+            
+            // South (bottom)
+            liveGridCtx.fillText('S', liveGridCanvas.width / 2, liveGridCanvas.height - 20);
+            
+            // East (right)
+            liveGridCtx.textAlign = 'left';
+            liveGridCtx.fillText('E', liveGridCanvas.width - 30, liveGridCanvas.height / 2);
+            
+            // West (left)
+            liveGridCtx.textAlign = 'right';
+            liveGridCtx.fillText('W', 30, liveGridCanvas.height / 2);
+        }
+        
+        let latestPrediction = null;
+        
+        function updateLiveGrid(lat, lon, predictions = null) {
+            if (!liveGridCtx || lat === null || lon === null || isNaN(lat) || isNaN(lon)) return;
+            
+            // Update current position
+            currentPosition = { lat, lon };
+            positionHistory.push({ lat, lon, time: Date.now() });
+            
+            // Keep only last 100 points for trail
+            if (positionHistory.length > 100) {
+                positionHistory.shift();
+            }
+            
+            // Store latest prediction
+            if (predictions && predictions.length > 0) {
+                latestPrediction = predictions[predictions.length - 1];
+            }
+            
+            // Update bounds (include predictions in bounds)
+            if (gridBounds.minLat === null) {
+                gridBounds = { minLat: lat, maxLat: lat, minLon: lon, maxLon: lon };
+            } else {
+                gridBounds.minLat = Math.min(gridBounds.minLat, lat);
+                gridBounds.maxLat = Math.max(gridBounds.maxLat, lat);
+                gridBounds.minLon = Math.min(gridBounds.minLon, lon);
+                gridBounds.maxLon = Math.max(gridBounds.maxLon, lon);
+            }
+            
+            // Include prediction in bounds if available
+            if (latestPrediction) {
+                gridBounds.minLat = Math.min(gridBounds.minLat, latestPrediction.predicted_lat);
+                gridBounds.maxLat = Math.max(gridBounds.maxLat, latestPrediction.predicted_lat);
+                gridBounds.minLon = Math.min(gridBounds.minLon, latestPrediction.predicted_lon);
+                gridBounds.maxLon = Math.max(gridBounds.maxLon, latestPrediction.predicted_lon);
+            }
+            
+            // Update display
+            const latEl = document.getElementById('currentLat');
+            const lonEl = document.getElementById('currentLon');
+            if (latEl) latEl.textContent = lat.toFixed(6);
+            if (lonEl) lonEl.textContent = lon.toFixed(6);
+            
+            // Redraw grid
+            drawLiveGrid();
+        }
+        
+        function drawLiveGrid() {
+            if (!liveGridCtx) return;
+            // Clear canvas
+            liveGridCtx.fillStyle = 'rgba(0,0,0,0.5)';
+            liveGridCtx.fillRect(0, 0, liveGridCanvas.width, liveGridCanvas.height);
+            
+            // Draw grid
+            drawGrid();
+            
+            // Draw compass labels
+            drawCompassLabels();
+            
+            if (!currentPosition) return;
+            
+            const padding = 50;
+            const width = liveGridCanvas.width - 2 * padding;
+            const height = liveGridCanvas.height - 2 * padding;
+            
+            // Calculate scale and offset
+            const latRange = gridBounds.maxLat - gridBounds.minLat || 0.001;
+            const lonRange = gridBounds.maxLon - gridBounds.minLon || 0.001;
+            
+            // Add padding to bounds
+            const latPadding = latRange * 0.1;
+            const lonPadding = lonRange * 0.1;
+            
+            const scaleX = width / (lonRange + 2 * lonPadding);
+            const scaleY = height / (latRange + 2 * latPadding);
+            
+            const toX = (lon) => padding + (lon - gridBounds.minLon + lonPadding) * scaleX;
+            const toY = (lat) => padding + height - (lat - gridBounds.minLat + latPadding) * scaleY;
+            
+            // Draw position trail
+            if (positionHistory.length > 1) {
+                liveGridCtx.strokeStyle = 'rgba(0,212,255,0.3)';
+                liveGridCtx.lineWidth = 2;
+                liveGridCtx.beginPath();
+                for (let i = 0; i < positionHistory.length; i++) {
+                    const pos = positionHistory[i];
+                    const x = toX(pos.lon);
+                    const y = toY(pos.lat);
+                    if (i === 0) {
+                        liveGridCtx.moveTo(x, y);
+                    } else {
+                        liveGridCtx.lineTo(x, y);
+                    }
+                }
+                liveGridCtx.stroke();
+            }
+            
+            // Draw current position point
+            const x = toX(currentPosition.lon);
+            const y = toY(currentPosition.lat);
+            
+            // Draw point with glow effect
+            const gradient = liveGridCtx.createRadialGradient(x, y, 0, x, y, 15);
+            gradient.addColorStop(0, 'rgba(0,212,255,1)');
+            gradient.addColorStop(0.5, 'rgba(0,212,255,0.5)');
+            gradient.addColorStop(1, 'rgba(0,212,255,0)');
+            liveGridCtx.fillStyle = gradient;
+            liveGridCtx.beginPath();
+            liveGridCtx.arc(x, y, 15, 0, Math.PI * 2);
+            liveGridCtx.fill();
+            
+            // Draw point center
+            liveGridCtx.fillStyle = '#00d4ff';
+            liveGridCtx.beginPath();
+            liveGridCtx.arc(x, y, 6, 0, Math.PI * 2);
+            liveGridCtx.fill();
+            
+            // Draw white border
+            liveGridCtx.strokeStyle = '#fff';
+            liveGridCtx.lineWidth = 2;
+            liveGridCtx.beginPath();
+            liveGridCtx.arc(x, y, 6, 0, Math.PI * 2);
+            liveGridCtx.stroke();
+            
+            // Draw predicted next position if available
+            if (latestPrediction && latestPrediction.predicted_lat && latestPrediction.predicted_lon) {
+                const predX = toX(latestPrediction.predicted_lon);
+                const predY = toY(latestPrediction.predicted_lat);
+                
+                // Check if prediction is within canvas bounds
+                if (predX >= 0 && predX <= liveGridCanvas.width && predY >= 0 && predY <= liveGridCanvas.height) {
+                    // Update prediction info display
+                    const predInfo = document.getElementById('predictionInfo');
+                    const predLatEl = document.getElementById('predictedLat');
+                    const predLonEl = document.getElementById('predictedLon');
+                    if (predInfo) predInfo.style.display = 'block';
+                    if (predLatEl) predLatEl.textContent = latestPrediction.predicted_lat.toFixed(6);
+                    if (predLonEl) predLonEl.textContent = latestPrediction.predicted_lon.toFixed(6);
+                    
+                    // Debug: Log prediction coordinates
+                    console.log('Drawing prediction:', {
+                        lat: latestPrediction.predicted_lat,
+                        lon: latestPrediction.predicted_lon,
+                        x: predX,
+                        y: predY,
+                        canvasSize: {w: liveGridCanvas.width, h: liveGridCanvas.height}
+                    });
+                } else {
+                    console.log('Prediction outside canvas bounds:', {predX, predY, canvasW: liveGridCanvas.width, canvasH: liveGridCanvas.height});
+                }
+                
+                // Draw line from current to predicted
+                liveGridCtx.strokeStyle = 'rgba(255,165,2,0.6)';
+                liveGridCtx.lineWidth = 2;
+                liveGridCtx.setLineDash([5, 5]);
+                liveGridCtx.beginPath();
+                liveGridCtx.moveTo(x, y);
+                liveGridCtx.lineTo(predX, predY);
+                liveGridCtx.stroke();
+                liveGridCtx.setLineDash([]);
+                
+                // Draw predicted point with orange/yellow color
+                const predGradient = liveGridCtx.createRadialGradient(predX, predY, 0, predX, predY, 12);
+                predGradient.addColorStop(0, 'rgba(255,165,2,0.8)');
+                predGradient.addColorStop(0.5, 'rgba(255,165,2,0.4)');
+                predGradient.addColorStop(1, 'rgba(255,165,2,0)');
+                liveGridCtx.fillStyle = predGradient;
+                liveGridCtx.beginPath();
+                liveGridCtx.arc(predX, predY, 12, 0, Math.PI * 2);
+                liveGridCtx.fill();
+                
+                // Draw predicted point center
+                liveGridCtx.fillStyle = '#ffa502';
+                liveGridCtx.beginPath();
+                liveGridCtx.arc(predX, predY, 5, 0, Math.PI * 2);
+                liveGridCtx.fill();
+                
+                // Draw white border for prediction
+                liveGridCtx.strokeStyle = '#fff';
+                liveGridCtx.lineWidth = 1.5;
+                liveGridCtx.beginPath();
+                liveGridCtx.arc(predX, predY, 5, 0, Math.PI * 2);
+                liveGridCtx.stroke();
+                
+                // Draw label
+                liveGridCtx.fillStyle = '#ffa502';
+                liveGridCtx.font = 'bold 12px Arial';
+                liveGridCtx.textAlign = 'center';
+                liveGridCtx.fillText('Pred', predX, predY - 18);
+            } else {
+                // Hide prediction info if no prediction
+                const predInfo = document.getElementById('predictionInfo');
+                if (predInfo) predInfo.style.display = 'none';
+            }
+        }
+        
         function handleFileSelect(e) {
             selectedFile = e.target.files[0];
             document.getElementById('fileName').textContent = selectedFile ? selectedFile.name : 'Click to select bag file';
         }
         
+        function showAnomalyPopup(anomalyData, processorId) {
+            console.log('[POPUP] showAnomalyPopup called with:', { anomalyData, processorId });
+            
+            // Remove any existing popup first
+            const existingPopup = document.getElementById('anomalyPopupOverlay');
+            if (existingPopup) {
+                existingPopup.remove();
+            }
+            
+            // Create popup overlay
+            const overlay = document.createElement('div');
+            overlay.id = 'anomalyPopupOverlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                z-index: 10000;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            `;
+            
+            // Create popup content
+            const popup = document.createElement('div');
+            popup.style.cssText = `
+                background: #1a1a2e;
+                border: 2px solid #ff4444;
+                border-radius: 15px;
+                padding: 30px;
+                max-width: 90%;
+                max-height: 90%;
+                overflow: auto;
+                box-shadow: 0 10px 40px rgba(255, 68, 68, 0.3);
+            `;
+            
+            // Create canvas for trajectory visualization
+            const canvas = document.createElement('canvas');
+            canvas.width = 800;
+            canvas.height = 600;
+            canvas.style.cssText = 'border: 1px solid #333; border-radius: 8px; margin: 20px 0;';
+            
+            // Popup content
+            popup.innerHTML = `
+                <h2 style="color: #ff4444; margin-bottom: 20px;">🚨 Critical GPS Anomaly Detected</h2>
+                <div style="margin-bottom: 20px;">
+                    <p><strong>Anomaly Time:</strong> ${anomalyData.anomaly_timestamp.toFixed(2)}s</p>
+                    <p><strong>Latitude Difference:</strong> ${anomalyData.lat_diff_degrees.toFixed(6)}°</p>
+                    <p><strong>Longitude Difference:</strong> ${anomalyData.lon_diff_degrees.toFixed(6)}°</p>
+                    <p><strong>Anomaly Location:</strong> (${anomalyData.anomaly_lat.toFixed(6)}, ${anomalyData.anomaly_lon.toFixed(6)})</p>
+                    <p><strong>Predicted Location:</strong> (${anomalyData.predicted_lat.toFixed(6)}, ${anomalyData.predicted_lon.toFixed(6)})</p>
+                </div>
+                <h3 style="color: #00d4ff; margin: 20px 0 10px 0;">Last 5 Seconds of Motion</h3>
+            `;
+            
+            popup.appendChild(canvas);
+            
+            // Action buttons
+            const buttonContainer = document.createElement('div');
+            buttonContainer.style.cssText = 'display: flex; gap: 15px; margin-top: 20px; justify-content: center;';
+            
+            const stopButton = document.createElement('button');
+            stopButton.textContent = '🛑 Stop Rover';
+            stopButton.style.cssText = `
+                padding: 12px 30px;
+                background: #ff4444;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+            `;
+            stopButton.onclick = async () => {
+                // Close popup immediately
+                overlay.remove();
+                window.anomalyPopupShown = false;
+                // Mark this anomaly as dismissed so it doesn't show again
+                if (anomalyData && anomalyData.anomaly_timestamp) {
+                    if (!window.dismissedAnomalies) {
+                        window.dismissedAnomalies = new Set();
+                    }
+                    window.dismissedAnomalies.add(anomalyData.anomaly_timestamp);
+                }
+                
+                // Clear anomaly data on backend to prevent popup from showing again
+                try {
+                    await fetch(`${API_BASE}/process/${processorId}/dismiss-anomaly`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                } catch (e) {
+                    console.error('Error dismissing anomaly:', e);
+                }
+                
+                alert('Rover stop command sent');
+            };
+            
+            const resumeButton = document.createElement('button');
+            resumeButton.textContent = '▶️ Resume Script';
+            resumeButton.style.cssText = `
+                padding: 12px 30px;
+                background: #00d4ff;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+            `;
+            resumeButton.onclick = async () => {
+                // Close popup immediately
+                overlay.remove();
+                window.anomalyPopupShown = false;
+                // Mark this anomaly as dismissed so it doesn't show again
+                if (anomalyData && anomalyData.anomaly_timestamp) {
+                    if (!window.dismissedAnomalies) {
+                        window.dismissedAnomalies = new Set();
+                    }
+                    window.dismissedAnomalies.add(anomalyData.anomaly_timestamp);
+                }
+                
+                // Clear anomaly data on backend to prevent popup from showing again
+                try {
+                    await fetch(`${API_BASE}/process/${processorId}/dismiss-anomaly`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                } catch (e) {
+                    console.error('Error dismissing anomaly:', e);
+                }
+                
+                try {
+                    const res = await fetch(`${API_BASE}/process/${processorId}/resume`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const result = await res.json();
+                    if (res.ok) {
+                        console.log('Script resumed successfully from index:', result.resume_index);
+                        // Update status badge
+                        document.getElementById('statusBadge').className = 'status-badge status-processing';
+                        document.getElementById('statusBadge').textContent = '● Processing';
+                    } else {
+                        alert('Error resuming: ' + (result.error || 'Unknown error'));
+                    }
+                } catch (e) {
+                    alert('Error resuming script: ' + e.message);
+                }
+            };
+            
+            buttonContainer.appendChild(stopButton);
+            buttonContainer.appendChild(resumeButton);
+            popup.appendChild(buttonContainer);
+            
+            overlay.appendChild(popup);
+            document.body.appendChild(overlay);
+            
+            // Draw trajectory on canvas
+            drawAnomalyTrajectory(canvas, anomalyData);
+        }
+        
+        function drawAnomalyTrajectory(canvas, anomalyData) {
+            const ctx = canvas.getContext('2d');
+            const motionHistory = anomalyData.motion_history || [];
+            
+            if (motionHistory.length === 0) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('No motion data available', canvas.width / 2, canvas.height / 2);
+                return;
+            }
+            
+            // Clear canvas
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Calculate bounds
+            const lats = motionHistory.map(m => m.gps_lat).filter(l => l !== null);
+            const lons = motionHistory.map(m => m.gps_lon).filter(l => l !== null);
+            
+            if (lats.length === 0 || lons.length === 0) return;
+            
+            const minLat = Math.min(...lats);
+            const maxLat = Math.max(...lats);
+            const minLon = Math.min(...lons);
+            const maxLon = Math.max(...lons);
+            
+            // Add anomaly coordinates to bounds
+            const allLats = [...lats, anomalyData.anomaly_lat, anomalyData.predicted_lat];
+            const allLons = [...lons, anomalyData.anomaly_lon, anomalyData.predicted_lon];
+            const finalMinLat = Math.min(...allLats);
+            const finalMaxLat = Math.max(...allLats);
+            const finalMinLon = Math.min(...allLons);
+            const finalMaxLon = Math.max(...allLons);
+            
+            // Add padding
+            const latRange = finalMaxLat - finalMinLat || 0.001;
+            const lonRange = finalMaxLon - finalMinLon || 0.001;
+            const padding = 0.1;
+            
+            const scaleX = (canvas.width - 100) / (lonRange * (1 + 2 * padding));
+            const scaleY = (canvas.height - 100) / (latRange * (1 + 2 * padding));
+            
+            const toX = (lon) => 50 + (lon - finalMinLon + lonRange * padding) * scaleX;
+            const toY = (lat) => 50 + (canvas.height - 100) - (lat - finalMinLat + latRange * padding) * scaleY;
+            
+            // Draw grid
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 10; i++) {
+                const x = 50 + (canvas.width - 100) * i / 10;
+                const y = 50 + (canvas.height - 100) * i / 10;
+                ctx.beginPath();
+                ctx.moveTo(x, 50);
+                ctx.lineTo(x, canvas.height - 50);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(50, y);
+                ctx.lineTo(canvas.width - 50, y);
+                ctx.stroke();
+            }
+            
+            // Draw trajectory (normal points in blue)
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < motionHistory.length; i++) {
+                const m = motionHistory[i];
+                if (m.gps_lat !== null && m.gps_lon !== null) {
+                    const x = toX(m.gps_lon);
+                    const y = toY(m.gps_lat);
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+            }
+            ctx.stroke();
+            
+            // Draw normal GPS points
+            ctx.fillStyle = '#00d4ff';
+            for (const m of motionHistory) {
+                if (m.gps_lat !== null && m.gps_lon !== null) {
+                    const x = toX(m.gps_lon);
+                    const y = toY(m.gps_lat);
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            // Draw predicted point (orange)
+            ctx.fillStyle = '#ffa502';
+            const predX = toX(anomalyData.predicted_lon);
+            const predY = toY(anomalyData.predicted_lat);
+            ctx.beginPath();
+            ctx.arc(predX, predY, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Predicted', predX, predY - 10);
+            
+            // Draw anomaly point (RED)
+            ctx.fillStyle = '#ff4444';
+            const anomX = toX(anomalyData.anomaly_lon);
+            const anomY = toY(anomalyData.anomaly_lat);
+            ctx.beginPath();
+            ctx.arc(anomX, anomY, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 14px Arial';
+            ctx.fillText('ANOMALY', anomX, anomY - 12);
+            
+            // Draw line from predicted to actual
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(predX, predY);
+            ctx.lineTo(anomX, anomY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw labels
+            ctx.fillStyle = '#fff';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('Normal GPS', 20, 30);
+            ctx.fillStyle = '#ffa502';
+            ctx.fillText('Predicted', 20, 50);
+            ctx.fillStyle = '#ff4444';
+            ctx.fillText('Anomaly (RED)', 20, 70);
+        }
+        
         async function startProcessing(useSynthetic) {
             try {
+                // Reset popup flags when starting new processing
+                window.anomalyPopupShown = false;
+                window.dismissedAnomalies = new Set();
+                
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
+                document.getElementById('downloadAllBtn').disabled = false;
+                document.getElementById('downloadAnomaliesBtn').disabled = false;
+                // Disable threshold controls during processing
+                document.getElementById('thresholdInput').disabled = true;
+                document.getElementById('changeThresholdBtn').disabled = true;
                 document.getElementById('statusBadge').className = 'status-badge status-processing';
                 document.getElementById('statusBadge').textContent = '● Processing';
                 
-                const body = { useSynthetic, config: { predictionWindow: 5, velocityThreshold: 5.0 } };
+                // Get threshold from input or use global threshold
+                const thresholdValue = parseFloat(document.getElementById('thresholdInput').value) || globalThreshold || 2.0;
+                const body = { 
+                    useSynthetic, 
+                    config: { 
+                        predictionWindow: 5, 
+                        velocityThreshold: 5.0,
+                        anomaly_threshold_degrees: thresholdValue
+                    } 
+                };
                 
                 if (!useSynthetic && selectedFile) {
                     const formData = new FormData();
@@ -478,7 +1049,7 @@
                 const data = await res.json();
                 processorId = data.processorId;
                 
-                statusInterval = setInterval(fetchStatus, 500);
+                statusInterval = setInterval(fetchStatus, 100);  // Update every 100ms for smoother animation
                 setTimeout(fetchStatus, 100);
             } catch (e) {
                 alert('Error: ' + e.message);
@@ -490,7 +1061,15 @@
             if (processorId) {
                 try { await fetch(`${API_BASE}/process/${processorId}/stop`, { method: 'POST' }); } catch(e) {}
             }
-            cleanup();
+            // Don't fully cleanup - keep download buttons enabled if data exists
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            // Re-enable threshold controls when stopped
+            document.getElementById('thresholdInput').disabled = false;
+            document.getElementById('changeThresholdBtn').disabled = false;
+            document.getElementById('statusBadge').className = 'status-badge status-idle';
+            document.getElementById('statusBadge').textContent = '● Stopped';
+            // Download buttons remain enabled if data exists
         }
         
         async function fetchStatus() {
@@ -506,7 +1085,80 @@
                 updateTrajectory(data.trajectoryData, data.anomalies);
                 updateAnomalies(data.anomalies);
                 
-                if (!data.isProcessing) cleanup();
+                // Update download buttons based on available data
+                updateDownloadButtons(data.metrics);
+                
+                // Update threshold display
+                if (data.metrics && data.metrics.gpsAnomalyThreshold !== undefined) {
+                    document.getElementById('currentThreshold').textContent = `Current: ${data.metrics.gpsAnomalyThreshold}°`;
+                    document.getElementById('thresholdInput').value = data.metrics.gpsAnomalyThreshold;
+                }
+                
+                // Update live grid with latest GPS position
+                if (data.trajectoryData && data.trajectoryData.length > 0) {
+                    const latest = data.trajectoryData[data.trajectoryData.length - 1];
+                    // Debug: Log predictions
+                    if (data.predictions && data.predictions.length > 0) {
+                        console.log('GPS Prediction received:', data.predictions[0]);
+                        console.log('  Current:', latest.lat, latest.lon);
+                        console.log('  Predicted:', data.predictions[0].predicted_lat, data.predictions[0].predicted_lon);
+                    } else {
+                        console.log('No predictions in data:', data);
+                    }
+                    updateLiveGrid(latest.lat, latest.lon, data.predictions);
+                }
+                
+                // Check if anomaly was detected and show popup
+                if (data.hasAnomalyData && data.anomaly_motion_data) {
+                    // Check if this anomaly was already dismissed
+                    const anomalyTimestamp = data.anomaly_motion_data.anomaly_timestamp;
+                    const isDismissed = window.dismissedAnomalies && window.dismissedAnomalies.has(anomalyTimestamp);
+                    
+                    console.log('[POPUP CHECK]', {
+                        hasAnomalyData: data.hasAnomalyData,
+                        hasMotionData: !!data.anomaly_motion_data,
+                        popupShown: window.anomalyPopupShown,
+                        anomalyTimestamp: anomalyTimestamp,
+                        isDismissed: isDismissed,
+                        dismissedSet: window.dismissedAnomalies ? Array.from(window.dismissedAnomalies) : null
+                    });
+                    
+                    // Show popup if not already shown and not dismissed
+                    if (!window.anomalyPopupShown && !isDismissed) {
+                        console.log('[POPUP] Showing anomaly popup');
+                        showAnomalyPopup(data.anomaly_motion_data, processorId);
+                        window.anomalyPopupShown = true;
+                    } else if (window.anomalyPopupShown) {
+                        console.log('[POPUP] Popup already shown, skipping');
+                    } else if (isDismissed) {
+                        console.log('[POPUP] Anomaly was already dismissed, not showing');
+                    }
+                } else {
+                    // Debug: log why popup is not showing
+                    if (data.hasAnomalyData && !data.anomaly_motion_data) {
+                        console.log('[POPUP] hasAnomalyData is true but anomaly_motion_data is missing');
+                    } else if (!data.hasAnomalyData) {
+                        console.log('[POPUP] hasAnomalyData is false');
+                    }
+                }
+                
+                // Reset popup flag if processing resumed or anomaly data cleared
+                if (data.isProcessing && (!data.hasAnomalyData || !data.anomaly_motion_data)) {
+                    window.anomalyPopupShown = false;
+                }
+                
+                // When processing finishes, update UI but keep download buttons enabled
+                if (!data.isProcessing && !data.isStopped) {
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('stopBtn').disabled = true;
+                    // Re-enable threshold controls when processing completes
+                    document.getElementById('thresholdInput').disabled = false;
+                    document.getElementById('changeThresholdBtn').disabled = false;
+                    document.getElementById('statusBadge').className = 'status-badge status-idle';
+                    document.getElementById('statusBadge').textContent = '● Complete';
+                    // Download buttons remain enabled (handled by updateDownloadButtons)
+                    if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+                }
             } catch (e) { console.error(e); }
         }
         
@@ -618,16 +1270,146 @@
             `).join('');
         }
         
-        function resetControls() {
+        function resetControls(keepDownloadsEnabled = false) {
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
+            // Re-enable threshold controls when not processing
+            document.getElementById('thresholdInput').disabled = false;
+            document.getElementById('changeThresholdBtn').disabled = false;
+            // Keep download buttons enabled if data exists, or if explicitly requested
+            if (!keepDownloadsEnabled) {
+                document.getElementById('downloadAllBtn').disabled = true;
+                document.getElementById('downloadAnomaliesBtn').disabled = true;
+            }
             document.getElementById('statusBadge').className = 'status-badge status-idle';
             document.getElementById('statusBadge').textContent = '● Idle';
+            // Reset live grid
+            currentPosition = null;
+            positionHistory = [];
+            gridBounds = { minLat: null, maxLat: null, minLon: null, maxLon: null };
+            drawEmptyGrid();
+        }
+        
+        function updateDownloadButtons(data) {
+            // Enable download buttons if there's data available
+            const hasReadings = data.totalReadings > 0;
+            const hasAnomalies = data.anomaliesDetected > 0;
+            
+            document.getElementById('downloadAllBtn').disabled = !hasReadings;
+            document.getElementById('downloadAnomaliesBtn').disabled = !hasAnomalies;
         }
         
         function cleanup() {
             if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
-            resetControls();
+            // Only fully reset if there's no data to preserve
+            resetControls(false);
+        }
+        
+        async function downloadAllData() {
+            if (!processorId) {
+                alert('No processor found. Please start processing first.');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/process/${processorId}/download/all`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert('Error downloading data: ' + (error.error || 'No data available. Please process a bag file first.'));
+                    return;
+                }
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `all_sensor_data_${processorId}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } catch (e) {
+                alert('Error downloading data: ' + e.message);
+            }
+        }
+        
+        async function downloadAnomalies() {
+            if (!processorId) {
+                alert('No processor found. Please start processing first.');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/process/${processorId}/download/anomalies`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert('Error downloading anomalies: ' + (error.error || 'No anomalies found. No anomalies were detected during processing.'));
+                    return;
+                }
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `anomalies_${processorId}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } catch (e) {
+                alert('Error downloading anomalies: ' + e.message);
+            }
+        }
+        
+        // Store threshold globally for use when starting processing
+        let globalThreshold = 2.0;
+        
+        async function changeThreshold() {
+            const thresholdInput = document.getElementById('thresholdInput');
+            const threshold = parseFloat(thresholdInput.value);
+            
+            if (isNaN(threshold) || threshold <= 0) {
+                alert('Please enter a valid positive number for the threshold.');
+                return;
+            }
+            
+            // Store globally for future processing
+            globalThreshold = threshold;
+            
+            // If processor exists and is not running, update it
+            if (processorId) {
+                // Check if processing is running (button should be disabled, but double-check)
+                const stopBtn = document.getElementById('stopBtn');
+                if (!stopBtn.disabled) {
+                    alert('Cannot change threshold while processing is running. Please stop processing first.');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`${API_BASE}/process/${processorId}/set-threshold`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ threshold: threshold })
+                    });
+                    
+                    const result = await response.json();
+                    if (response.ok) {
+                        alert(`Threshold updated to ${threshold}°`);
+                        document.getElementById('currentThreshold').textContent = `Current: ${threshold}°`;
+                        return;
+                    } else {
+                        alert('Error updating threshold: ' + (result.error || 'Unknown error'));
+                        return;
+                    }
+                } catch (e) {
+                    alert('Error updating threshold: ' + e.message);
+                    return;
+                }
+            }
+            
+            // If no processor, just update the display (will be used when processing starts)
+            alert(`Threshold set to ${threshold}°. This will be used when you start processing.`);
+            document.getElementById('currentThreshold').textContent = `Current: ${threshold}°`;
         }
         
         async function loadPresets() {

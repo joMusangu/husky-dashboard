@@ -321,20 +321,12 @@
                 
                 <!-- Side Panel -->
                 <div>
-                    <!-- Trust Scores -->
+                    <!-- Trust Score -->
                     <div class="card">
-                        <h2>🎯 Sensor Trust</h2>
+                        <h2>🎯 Trust Score</h2>
                         <div class="trust-bar-container">
-                            <div class="trust-label"><span>GPS</span><span id="gpsTrust">100%</span></div>
-                            <div class="trust-bar"><div class="trust-fill trust-high" id="gpsBar" style="width:100%"></div></div>
-                        </div>
-                        <div class="trust-bar-container">
-                            <div class="trust-label"><span>IMU</span><span id="imuTrust">100%</span></div>
-                            <div class="trust-bar"><div class="trust-fill trust-high" id="imuBar" style="width:100%"></div></div>
-                        </div>
-                        <div class="trust-bar-container">
-                            <div class="trust-label"><span>Odometry</span><span id="odomTrust">100%</span></div>
-                            <div class="trust-bar"><div class="trust-fill trust-high" id="odomBar" style="width:100%"></div></div>
+                            <div class="trust-label"><span>GPS Prediction Accuracy</span><span id="trustScore">100%</span></div>
+                            <div class="trust-bar"><div class="trust-fill trust-high" id="trustBar" style="width:100%"></div></div>
                         </div>
                     </div>
                     
@@ -1097,15 +1089,30 @@
                 // Update live grid with latest GPS position
                 if (data.trajectoryData && data.trajectoryData.length > 0) {
                     const latest = data.trajectoryData[data.trajectoryData.length - 1];
-                    // Debug: Log predictions
+                    
+                    // Update trust score dynamically when new predictions are received
                     if (data.predictions && data.predictions.length > 0) {
-                        console.log('GPS Prediction received:', data.predictions[0]);
-                        console.log('  Current:', latest.lat, latest.lon);
-                        console.log('  Predicted:', data.predictions[0].predicted_lat, data.predictions[0].predicted_lon);
+                        const latestPred = data.predictions[data.predictions.length - 1];
+                        console.log('[PREDICTION] New prediction received:', latestPred);
+                        console.log('  Current GPS:', latest.lat, latest.lon);
+                        console.log('  Predicted GPS:', latestPred.predicted_lat, latestPred.predicted_lon);
+                        
+                        // Update trust score immediately when prediction is received
+                        // Trust score should already be in sensorData, but ensure it's updated
+                        if (data.sensorData && data.sensorData.gps) {
+                            updateTrustScores(data.sensorData);
+                            console.log('[TRUST] Trust score updated to:', (data.sensorData.gps.trustScore * 100).toFixed(2) + '%');
+                        }
                     } else {
-                        console.log('No predictions in data:', data);
+                        console.log('[PREDICTION] No predictions in data');
                     }
+                    
                     updateLiveGrid(latest.lat, latest.lon, data.predictions);
+                }
+                
+                // Also update trust score whenever sensorData changes (even without new predictions)
+                if (data.sensorData && data.sensorData.gps) {
+                    updateTrustScores(data.sensorData);
                 }
                 
                 // Check if anomaly was detected and show popup
@@ -1171,17 +1178,35 @@
         }
         
         function updateTrustScores(s) {
-            if (!s) return;
-            ['gps', 'imu', 'odometry'].forEach(sensor => {
-                const score = (s[sensor]?.trustScore || 1) * 100;
-                const el = document.getElementById(sensor === 'odometry' ? 'odomTrust' : sensor + 'Trust');
-                const bar = document.getElementById(sensor === 'odometry' ? 'odomBar' : sensor + 'Bar');
-                if (el) el.textContent = score.toFixed(0) + '%';
-                if (bar) {
-                    bar.style.width = score + '%';
-                    bar.className = 'trust-fill ' + (score > 80 ? 'trust-high' : score > 50 ? 'trust-medium' : 'trust-low');
-                }
-            });
+            if (!s) {
+                console.log('[TRUST] No sensor data provided');
+                return;
+            }
+            
+            // Get GPS trust score (based on prediction accuracy)
+            const score = (s.gps?.trustScore || 1) * 100;
+            const el = document.getElementById('trustScore');
+            const bar = document.getElementById('trustBar');
+            
+            if (el) {
+                el.textContent = score.toFixed(1) + '%';
+                console.log('[TRUST] Updated trust score display to:', score.toFixed(1) + '%');
+            }
+            
+            if (bar) {
+                bar.style.width = score + '%';
+                bar.className = 'trust-fill ' + (score > 80 ? 'trust-high' : score > 50 ? 'trust-medium' : 'trust-low');
+                console.log('[TRUST] Updated trust bar width to:', score + '%');
+            }
+            
+            // Log trust score details for debugging
+            if (s.gps) {
+                console.log('[TRUST] Trust score details:', {
+                    trustScore: s.gps.trustScore,
+                    percentage: score,
+                    errorPercentage: s.gps.errorPercentage
+                });
+            }
         }
         
         function updateTrajectory(traj, anomalies) {

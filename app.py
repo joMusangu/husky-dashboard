@@ -363,7 +363,7 @@ def process_ros_bag(processor_id, bag_path, config, start_index=0):
                     print(f"  Predicted: ({predicted_lat:.6f}, {predicted_lon:.6f})")
                     print(f"  Velocity: {velocity_mps:.2f} m/s, Direction: {np.degrees(direction_rad):.2f}°")
                 
-                # Check if current GPS reading matches a previous prediction (at s=1)
+                # Check if current GPS reading matches a previous prediction (at s=1) - for anomaly detection
                 prediction_window = 0.3  # Allow 0.3s tolerance for 1-second predictions
                 matching_prediction = None
                 
@@ -373,9 +373,78 @@ def process_ros_bag(processor_id, bag_path, config, start_index=0):
                         matching_prediction = pred_data
                         break
                 
-                # If we found a matching prediction, compare and flag anomalies
-                if matching_prediction:
+                # ALWAYS get the most recent prediction for trust score calculation (regardless of timing)
+                # This ensures trust score updates on EVERY GPS reading if any prediction exists
+                most_recent_prediction = None
+                if predictions:
+                    # Get the most recent prediction (closest to current time, no time limit)
+                    closest_time = min(predictions.keys(), key=lambda t: abs(t - current_time))
+                    most_recent_prediction = predictions[closest_time]
+                
+                # Use matching prediction for anomaly check, but use most recent for trust score
+                # This ensures trust score updates continuously, not just when predictions match exactly
+                prediction_to_compare = most_recent_prediction  # Always use most recent for trust score
+                
+                # Calculate trust score for EVERY GPS reading if we have any prediction
+                # This happens regardless of whether it's an anomaly or not
+                if prediction_to_compare:
                     # Calculate difference in degrees (latitude and longitude separately)
+                    lat_diff_degrees = abs(prediction_to_compare['predicted_lat'] - current_lat)
+                    lon_diff_degrees = abs(prediction_to_compare['predicted_lon'] - current_lon)
+                    
+                    # Calculate trust score using percentage difference method
+                    # Calculate % difference between actual and predicted for both lat and lon, then average
+                    predicted_lat = prediction_to_compare['predicted_lat']
+                    predicted_lon = prediction_to_compare['predicted_lon']
+                    
+                    # Initialize variables
+                    lat_error_pct = 0.0
+                    lon_error_pct = 0.0
+                    average_error_pct = 0.0
+                    
+                    # Calculate percentage difference: |actual - predicted| / |predicted| * 100
+                    # Avoid division by zero
+                    if abs(predicted_lat) > 0.000001:
+                        lat_error_pct = abs((current_lat - predicted_lat) / predicted_lat) * 100
+                    else:
+                        lat_error_pct = 100.0  # If predicted is zero, 100% error
+                    
+                    if abs(predicted_lon) > 0.000001:
+                        lon_error_pct = abs((current_lon - predicted_lon) / predicted_lon) * 100
+                    else:
+                        lon_error_pct = 100.0  # If predicted is zero, 100% error
+                    
+                    # Average the error percentages
+                    average_error_pct = (lat_error_pct + lon_error_pct) / 2.0
+                    
+                    # Trust score: 100% - average_error_percentage (clamped between 0 and 100)
+                    # Reset each time - always based on current error, not accumulated
+                    trust_score = max(0, min(100, 100 - average_error_pct))
+                    error_percentage = average_error_pct
+                    
+                    # Store latest trust score in proc_data (resets each time) - ALWAYS UPDATE
+                    proc_data['latest_trust_score'] = trust_score
+                    proc_data['latest_error_percentage'] = error_percentage
+                    proc_data['latest_prediction_comparison'] = {
+                        'timestamp': current_time,
+                        'lat_diff_degrees': lat_diff_degrees,
+                        'lon_diff_degrees': lon_diff_degrees,
+                        'lat_error_pct': lat_error_pct,
+                        'lon_error_pct': lon_error_pct,
+                        'average_error_pct': average_error_pct,
+                        'error_percentage': error_percentage,
+                        'trust_score': trust_score
+                    }
+                    
+                    # Log trust score update (every time, not just anomalies)
+                    print(f"[TRUST_UPDATE] At t={current_time:.2f}s: Trust Score = {trust_score:.2f}%")
+                    print(f"  Predicted: ({predicted_lat:.6f}, {predicted_lon:.6f})")
+                    print(f"  Actual:    ({current_lat:.6f}, {current_lon:.6f})")
+                    print(f"  Error: {average_error_pct:.3f}% (Lat: {lat_error_pct:.3f}%, Lon: {lon_error_pct:.3f}%)")
+                
+                # Only check for anomalies if we have a matching prediction (exact time match)
+                if matching_prediction:
+                    # Recalculate differences for anomaly check (in case we used most_recent_prediction above)
                     lat_diff_degrees = abs(matching_prediction['predicted_lat'] - current_lat)
                     lon_diff_degrees = abs(matching_prediction['predicted_lon'] - current_lon)
                     
@@ -387,8 +456,6 @@ def process_ros_bag(processor_id, bag_path, config, start_index=0):
                     # Log comparison
                     status = "✓ WITHIN" if not exceeds_threshold else "⚠ OUTSIDE"
                     print(f"[COMPARE] At t={current_time:.2f}s: {status} boundary")
-                    print(f"  Predicted: ({matching_prediction['predicted_lat']:.6f}, {matching_prediction['predicted_lon']:.6f})")
-                    print(f"  Actual:    ({current_lat:.6f}, {current_lon:.6f})")
                     print(f"  Lat diff: {lat_diff_degrees:.6f}° (threshold: {anomaly_threshold_degrees}°)")
                     print(f"  Lon diff: {lon_diff_degrees:.6f}° (threshold: {anomaly_threshold_degrees}°)")
                     
@@ -650,9 +717,42 @@ def get_status(processor_id):
     # Get latest reading
     latest_reading = readings[-1] if readings else None
     
-    # Format sensor data (anomaly detection disabled)
+    # Calculate trust scores based on latest prediction error (resets each time)
     sensor_data = {}
-    # Sensor data not available - anomaly detection disabled
+    
+    # Always calculate trust score from latest_trust_score if available (updated on every GPS reading)
+    # This ensures trust score updates dynamically with every prediction comparison
+    if 'latest_trust_score' in proc_data and proc_data['latest_trust_score'] is not None:
+        trust_score = proc_data['latest_trust_score']
+        error_percentage = proc_data.get('latest_error_percentage', 0.0)
+        
+        print(f"[TRUST_SCORE] Latest trust score: {trust_score:.2f}% (error: {error_percentage:.2f}%)")
+        
+        # GPS trust score based on prediction accuracy
+        sensor_data['gps'] = {
+            'trustScore': trust_score / 100.0,  # Convert to 0-1 range
+            'errorPercentage': error_percentage
+        }
+    elif 'latest_prediction_comparison' in proc_data:
+        # Fallback to latest_prediction_comparison if latest_trust_score not available
+        comparison = proc_data['latest_prediction_comparison']
+        trust_score = comparison.get('trust_score', 100.0)
+        error_percentage = comparison.get('error_percentage', 0.0)
+        
+        print(f"[TRUST_SCORE] Using comparison trust score: {trust_score:.2f}% (error: {error_percentage:.2f}%)")
+        
+        # GPS trust score based on prediction accuracy
+        sensor_data['gps'] = {
+            'trustScore': trust_score / 100.0,  # Convert to 0-1 range
+            'errorPercentage': error_percentage
+        }
+    else:
+        # No prediction comparison yet - default to 100% trust
+        print(f"[TRUST_SCORE] No prediction comparison available, using default 100%")
+        sensor_data['gps'] = {
+            'trustScore': 1.0,
+            'errorPercentage': 0.0
+        }
     
     # Format trajectory data with anomaly flags
     trajectory_data = []
